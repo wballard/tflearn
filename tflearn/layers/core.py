@@ -365,7 +365,7 @@ def single_unit(incoming, activation='linear', bias=True, trainable=True,
     
     
 def highway(incoming, n_units, activation='linear',
-                    weights_init='truncated_normal', bias_init='zeros',
+                    weights_init='truncated_normal', bias_init='zeros', gate_init_constant=-1,
                     regularizer=None, weight_decay=0.001, trainable=True,
                     restore=True, name="FullyConnectedHighway"):
     """ Fully Connected Highway.
@@ -389,6 +389,8 @@ def highway(incoming, n_units, activation='linear',
             (see tflearn.initializations) Default: 'truncated_normal'.
         bias_init: `str` (name) or `Tensor`. Bias initialization.
             (see tflearn.initializations) Default: 'zeros'.
+        gate_init_constant: `float`. Initialize the gate weights with this value, 
+            -1 by default, and suggested for depth < 10 layers. Default: -1.
         regularizer: `str` (name) or `Tensor`. Add a regularizer to this
             layer weights (see tflearn.regularizers). Default: None.
         weight_decay: `float`. Regularizer decay parameter. Default: 0.001.
@@ -440,7 +442,7 @@ def highway(incoming, n_units, activation='linear',
             tf.add_to_collection(tf.GraphKeys.LAYER_VARIABLES + '/' + transform_gate, W_T) 
             
             b_T = va.variable(transform_gate + 'b', shape=[n_units],
-                            initializer=tf.constant_initializer(-1), trainable=trainable,
+                            initializer=tf.constant_initializer(gate_init_constant), trainable=trainable,
                             restore=restore)
             tf.add_to_collection(tf.GraphKeys.LAYER_VARIABLES + '/' + transform_gate, b_T)
 
