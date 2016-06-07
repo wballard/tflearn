@@ -12,6 +12,7 @@ from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import tensor_array_ops
+from tensorflow.python.ops import nn_ops
 
 from .. import utils
 from .. import activations
@@ -23,10 +24,10 @@ from .. import initializations
 # --------------------------
 
 
-def simple_rnn(incoming, n_units, activation='sigmoid', bias=True,
-               weights_init='truncated_normal', return_seq=False,
-               return_states=False, initial_state=None, trainable=True,
-               restore=True, name="SimpleRNN"):
+def simple_rnn(incoming, n_units, activation='sigmoid', dropout=None,
+               bias=True, weights_init='truncated_normal', return_seq=False,
+               return_states=False, initial_state=None, sequence_length=None,
+               trainable=True, restore=True, name="SimpleRNN"):
     """ Simple RNN.
 
     Simple Recurrent Layer.
@@ -44,6 +45,8 @@ def simple_rnn(incoming, n_units, activation='sigmoid', bias=True,
         activation: `str` (name) or `function` (returning a `Tensor`).
             Activation applied to this layer (see tflearn.activations).
             Default: 'linear'.
+        dropout: `tuple` of `float`: (input_keep_prob, output_keep_prob). The
+            input and output keep probability.
         bias: `bool`. If True, a bias is used.
         weights_init: `str` (name) or `Tensor`. Weights initialization.
             (See tflearn.initializations) Default: 'truncated_normal'.
@@ -53,6 +56,11 @@ def simple_rnn(incoming, n_units, activation='sigmoid', bias=True,
             states: (output, states).
         initial_state: `Tensor`. An initial state for the RNN.  This must be
             a tensor of appropriate type and shape [batch_size x cell.state_size].
+        sequence_length: Specifies the length of each sequence in inputs.
+            An int32 or int64 vector (tensor) size `[batch_size]`.
+        trainable: `bool`. If True, weights will be trainable.
+        restore: `bool`. If True, this layer weights will be restored when
+            loading a model.
         name: `str`. A name for this layer (optional).
 
     """
@@ -64,6 +72,18 @@ def simple_rnn(incoming, n_units, activation='sigmoid', bias=True,
     with tf.name_scope(name) as scope:
         cell = BasicRNNCell(n_units, activation, bias, W_init,
                             trainable, restore)
+        out_cell = cell
+        # Apply dropout
+        if dropout:
+            if type(dropout) in [tuple, list]:
+                in_keep_prob = dropout[0]
+                out_keep_prob = dropout[1]
+            elif isinstance(dropout, float):
+                in_keep_prob, out_keep_prob = dropout, dropout
+            else:
+                raise Exception("Invalid dropout type (must be a 2-D tuple of "
+                                "float)")
+            out_cell = DropoutWrapper(cell, in_keep_prob, out_keep_prob)
 
         inference = incoming
         # If a tensor given, convert it to a per timestep list
@@ -81,8 +101,9 @@ def simple_rnn(incoming, n_units, activation='sigmoid', bias=True,
             tf.add_to_collection(tf.GraphKeys.LAYER_VARIABLES + '/' + scope,
                                  cell.b)
 
-        outputs, states = _rnn(cell, inference, dtype=tf.float32,
-                               initial_state=initial_state, scope=scope[:-1])
+        outputs, states = _rnn(out_cell, inference, dtype=tf.float32,
+                               initial_state=initial_state, scope=scope[:-1],
+                               sequence_length=sequence_length)
 
         # Track activations.
         tf.add_to_collection(tf.GraphKeys.ACTIVATIONS, outputs[-1])
@@ -94,9 +115,10 @@ def simple_rnn(incoming, n_units, activation='sigmoid', bias=True,
 
 
 def lstm(incoming, n_units, activation='sigmoid', inner_activation='tanh',
-         bias=True, weights_init='truncated_normal', forget_bias=1.0,
-         return_seq=False, return_states=False, initial_state=None,
-         trainable=True, restore=True, name="LSTM"):
+         dropout=None, bias=True, weights_init='truncated_normal',
+         forget_bias=1.0, return_seq=False, return_states=False,
+         initial_state=None, sequence_length=None, trainable=True,
+         restore=True, name="LSTM"):
     """ LSTM.
 
     Long Short Term Memory Recurrent Layer.
@@ -116,6 +138,8 @@ def lstm(incoming, n_units, activation='sigmoid', inner_activation='tanh',
             Default: 'sigmoid'.
         inner_activation: `str` (name) or `function` (returning a `Tensor`).
             LSTM inner activation. Default: 'tanh'.
+        dropout: `tuple` of `float`: (input_keep_prob, output_keep_prob). The
+            input and output keep probability.
         bias: `bool`. If True, a bias is used.
         weights_init: `str` (name) or `Tensor`. Weights initialization.
             (See tflearn.initializations) Default: 'truncated_normal'.
@@ -126,6 +150,11 @@ def lstm(incoming, n_units, activation='sigmoid', inner_activation='tanh',
             states: (output, states).
         initial_state: `Tensor`. An initial state for the RNN.  This must be
             a tensor of appropriate type and shape [batch_size x cell.state_size].
+        sequence_length: Specifies the length of each sequence in inputs.
+            An int32 or int64 vector (tensor) size `[batch_size]`.
+        trainable: `bool`. If True, weights will be trainable.
+        restore: `bool`. If True, this layer weights will be restored when
+            loading a model.
         name: `str`. A name for this layer (optional).
 
     References:
@@ -145,6 +174,19 @@ def lstm(incoming, n_units, activation='sigmoid', inner_activation='tanh',
     with tf.name_scope(name) as scope:
         cell = BasicLSTMCell(n_units, activation, inner_activation, bias,
                              W_init, forget_bias, trainable, restore)
+        out_cell = cell
+        # Apply dropout
+        if dropout:
+            if type(dropout) in [tuple, list]:
+                in_keep_prob = dropout[0]
+                out_keep_prob = dropout[1]
+            elif isinstance(dropout, float):
+                in_keep_prob, out_keep_prob = dropout, dropout
+            else:
+                raise Exception("Invalid dropout type (must be a 2-D tuple of "
+                                "float)")
+            out_cell = DropoutWrapper(cell, in_keep_prob, out_keep_prob)
+
         inference = incoming
         # If a tensor given, convert it to a per timestep list
         if type(inference) not in [list, np.array]:
@@ -154,8 +196,9 @@ def lstm(incoming, n_units, activation='sigmoid', inner_activation='tanh',
             inference = tf.transpose(inference, (axes))
             inference = tf.unpack(inference)
 
-        outputs, states = _rnn(cell, inference, dtype=tf.float32,
-                               initial_state=initial_state, scope=scope[:-1])
+        outputs, states = _rnn(out_cell, inference, dtype=tf.float32,
+                               initial_state=initial_state, scope=scope[:-1],
+                               sequence_length=sequence_length)
         # Track per layer variables
         tf.add_to_collection(tf.GraphKeys.LAYER_VARIABLES + '/' + scope, cell.W)
         if bias:
@@ -171,9 +214,9 @@ def lstm(incoming, n_units, activation='sigmoid', inner_activation='tanh',
 
 
 def gru(incoming, n_units, activation='sigmoid', inner_activation='tanh',
-        bias=True, weights_init='truncated_normal', return_seq=False,
-        return_states=False, initial_state=None, trainable=True,
-        restore=True, name="GRU"):
+        dropout=None, bias=True, weights_init='truncated_normal',
+        return_seq=False, return_states=False, initial_state=None,
+        sequence_length=None, trainable=True, restore=True, name="GRU"):
     """ GRU.
 
     Gated Recurrent Unit Layer.
@@ -193,6 +236,8 @@ def gru(incoming, n_units, activation='sigmoid', inner_activation='tanh',
             Default: 'sigmoid'.
         inner_activation: `str` (name) or `function` (returning a `Tensor`).
             GRU inner activation. Default: 'tanh'.
+        dropout: `tuple` of `float`: (input_keep_prob, output_keep_prob). The
+            input and output keep probability.
         bias: `bool`. If True, a bias is used.
         weights_init: `str` (name) or `Tensor`. Weights initialization.
             (See tflearn.initializations) Default: 'truncated_normal'.
@@ -202,6 +247,11 @@ def gru(incoming, n_units, activation='sigmoid', inner_activation='tanh',
             states: (output, states).
         initial_state: `Tensor`. An initial state for the RNN.  This must be
             a tensor of appropriate type and shape [batch_size x cell.state_size].
+        sequence_length: Specifies the length of each sequence in inputs.
+            An int32 or int64 vector (tensor) size `[batch_size]`.
+        trainable: `bool`. If True, weights will be trainable.
+        restore: `bool`. If True, this layer weights will be restored when
+            loading a model.
         name: `str`. A name for this layer (optional).
 
     References:
@@ -220,6 +270,18 @@ def gru(incoming, n_units, activation='sigmoid', inner_activation='tanh',
     with tf.name_scope(name) as scope:
         cell = GRUCell(n_units, activation, inner_activation, bias, W_init,
                        trainable, restore)
+        out_cell = cell
+        # Apply dropout
+        if dropout:
+            if type(dropout) in [tuple, list]:
+                in_keep_prob = dropout[0]
+                out_keep_prob = dropout[1]
+            elif isinstance(dropout, float):
+                in_keep_prob, out_keep_prob = dropout, dropout
+            else:
+                raise Exception("Invalid dropout type (must be a 2-D tuple of "
+                                "float)")
+            out_cell = DropoutWrapper(cell, in_keep_prob, out_keep_prob)
 
         inference = incoming
         # If a tensor given, convert it to a per timestep list
@@ -230,8 +292,9 @@ def gru(incoming, n_units, activation='sigmoid', inner_activation='tanh',
             inference = tf.transpose(inference, (axes))
             inference = tf.unpack(inference)
 
-        outputs, states = _rnn(cell, inference, dtype=tf.float32,
-                               initial_state=initial_state, scope=scope[:-1])
+        outputs, states = _rnn(out_cell, inference, dtype=tf.float32,
+                               initial_state=initial_state, scope=scope[:-1],
+                               sequence_length=sequence_length)
 
         # Track per layer variables
         tf.add_to_collection(tf.GraphKeys.LAYER_VARIABLES + '/' + scope,
@@ -254,7 +317,8 @@ def gru(incoming, n_units, activation='sigmoid', inner_activation='tanh',
 
 def bidirectional_rnn(incoming, rnncell_fw, rnncell_bw, return_seq=False,
                       return_states=False, initial_state_fw=None,
-                      initial_state_bw=None, name="BidirectionalRNN"):
+                      initial_state_bw=None, sequence_length=None,
+                      name="BidirectionalRNN"):
     """ Bidirectional RNN.
 
     Build a bidirectional recurrent neural network, it requires 2 RNN Cells
@@ -283,6 +347,8 @@ def bidirectional_rnn(incoming, rnncell_fw, rnncell_bw, return_seq=False,
         initial_state_bw: `Tensor`. An initial state for the backward RNN.
             This must be a tensor of appropriate type and shape [batch_size
             x cell.state_size].
+        sequence_length: Specifies the length of each sequence in inputs.
+            An int32 or int64 vector (tensor) size `[batch_size]`.
         name: `str`. A name for this layer (optional).
 
     """
@@ -305,6 +371,7 @@ def bidirectional_rnn(incoming, rnncell_fw, rnncell_bw, return_seq=False,
             rnncell_fw, rnncell_bw, inference,
             initial_state_fw=initial_state_fw,
             initial_state_bw=initial_state_bw,
+            sequence_length=sequence_length,
             scope="BiRNN")
 
         c = tf.GraphKeys.LAYER_VARIABLES
@@ -640,6 +707,62 @@ class GRUCell(RNNCell):
         new_h = u * state + (1 - u) * c
         return new_h, new_h
 
+
+class DropoutWrapper(RNNCell):
+    """Operator adding dropout to inputs and outputs of the given cell."""
+
+    def __init__(self, cell, input_keep_prob=1.0, output_keep_prob=1.0,
+                 seed=None):
+        """Create a cell with added input and/or output dropout.
+        Dropout is never used on the state.
+        Args:
+          cell: an RNNCell, a projection to output_size is added to it.
+          input_keep_prob: unit Tensor or float between 0 and 1, input keep
+            probability; if it is float and 1, no input dropout will be added.
+          output_keep_prob: unit Tensor or float between 0 and 1, output keep
+            probability; if it is float and 1, no output dropout will be added.
+          seed: (optional) integer, the randomness seed.
+        Raises:
+          TypeError: if cell is not an RNNCell.
+          ValueError: if keep_prob is not between 0 and 1.
+        """
+        if not isinstance(cell, RNNCell):
+            raise TypeError("The parameter cell is not a RNNCell.")
+        if (isinstance(input_keep_prob, float) and
+                not (input_keep_prob >= 0.0 and input_keep_prob <= 1.0)):
+            raise ValueError(
+                "Parameter input_keep_prob must be between 0 and 1: %d"
+                % input_keep_prob)
+        if (isinstance(output_keep_prob, float) and
+                not (output_keep_prob >= 0.0 and output_keep_prob <= 1.0)):
+            raise ValueError(
+                "Parameter input_keep_prob must be between 0 and 1: %d"
+                % output_keep_prob)
+        self._cell = cell
+        self._input_keep_prob = input_keep_prob
+        self._output_keep_prob = output_keep_prob
+        self._seed = seed
+
+    @property
+    def state_size(self):
+        return self._cell.state_size
+
+    @property
+    def output_size(self):
+        return self._cell.output_size
+
+    def __call__(self, inputs, state, scope=None):
+        """Run the cell with the declared dropouts."""
+        if (not isinstance(self._input_keep_prob, float) or
+                    self._input_keep_prob < 1):
+            inputs = nn_ops.dropout(inputs, self._input_keep_prob,
+                                    seed=self._seed)
+        output, new_state = self._cell(inputs, state, scope)
+        if (not isinstance(self._output_keep_prob, float) or
+                    self._output_keep_prob < 1):
+            output = nn_ops.dropout(output, self._output_keep_prob,
+                                    seed=self._seed)
+        return output, new_state
 
 # --------------------------
 #  RNN calculations
